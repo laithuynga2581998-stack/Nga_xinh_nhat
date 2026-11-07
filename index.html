@@ -805,10 +805,17 @@ function theoDoi(){
 }
 
 /* ===================== GỌI CLAUDE ===================== */
-var KEY="", MODEL="gemini-2.0-flash";
+var KEY="";
+/* Danh sách model dự phòng: hỏng cái đầu thì tự thử cái sau, nhớ lại cái chạy được */
+var MODELS=["gemini-3.5-flash","gemini-flash-latest","gemini-3.6-flash","gemini-3.1-flash-lite","gemini-2.5-flash"];
+var MODEL=MODELS[0];
 function docKey(){
   try{ KEY=localStorage.getItem("nga_key")||"" }catch(e){ KEY="" }
+  try{ var m=localStorage.getItem("nga_model"); if(m) MODEL=m }catch(e){}
   return KEY;
+}
+function nhoModel(m){
+  MODEL=m; try{ localStorage.setItem("nga_model",m) }catch(e){}
 }
 function loiClaude(e){
   var c=(e&&e.code)||"";
@@ -816,6 +823,8 @@ function loiClaude(e){
   if(c==="http_400") return "Chìa khoá không đúng hoặc đã bị xoá. Bấm ⚙️ kiểm tra lại giúp mình.";
   if(c==="http_403") return "Chìa khoá này không có quyền dùng. Tạo chìa khoá mới ở aistudio.google.com nhé.";
   if(c==="http_429") return "Hôm nay dùng hết lượt miễn phí rồi, nghỉ một lát rồi thử lại nha 🥺";
+  if(c==="http_404") return "Model AI này Google đã ngừng. Chị nhắn Claude để cập nhật lại giúp nhé.";
+  if(c==="http_503") return "Máy chủ Google đang đông khách, chị chờ một chút rồi bấm lại nha.";
   if(c==="mang") return "Không nối được mạng. Kiểm tra wifi hoặc 4G giúp mình nhé.";
   if(c==="json") return "Kết quả trả về hơi lạ, bấm thử lại giúp mình.";
   if(c&&c.indexOf("http_5")===0) return "Máy chủ Google đang trục trặc, lát nữa thử lại nhé.";
@@ -851,15 +860,35 @@ function hoi(prompt,opt){
       parts.push({inline_data:{mime_type:o.mime,data:o.data}});
     });
   }
-  return p.then(function(){
-    return fetch("https://generativelanguage.googleapis.com/v1beta/models/"+MODEL+":generateContent",{
+  var than=JSON.stringify({
+    contents:[{role:"user",parts:parts}],
+    generationConfig:{temperature:0.25,responseMimeType:"application/json"}
+  });
+  function goi(m){
+    return fetch("https://generativelanguage.googleapis.com/v1beta/models/"+m+":generateContent",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-goog-api-key":KEY},
-      body:JSON.stringify({
-        contents:[{role:"user",parts:parts}],
-        generationConfig:{temperature:0.25,responseMimeType:"application/json"}
-      })
+      body:than
     }).catch(function(){ throw {code:"mang"} });
+  }
+  /* thử model đang nhớ; nếu Google đã bỏ model đó (404) thì dò lần lượt các model khác */
+  function doModel(ds,i){
+    return goi(ds[i]).then(function(r){
+      if(r.status===404 && i+1<ds.length) return doModel(ds,i+1);
+      if(r.ok && ds[i]!==MODEL) nhoModel(ds[i]);
+      return r;
+    });
+  }
+  function thuLai(ds){
+    return doModel(ds,0).then(function(r){
+      /* 503 là Google đang quá tải, chờ rồi thử lại một lần */
+      if(r.status!==503) return r;
+      return new Promise(function(res){ setTimeout(res,1800) }).then(function(){ return doModel(ds,0) });
+    });
+  }
+  return p.then(function(){
+    var ds=[MODEL].concat(MODELS.filter(function(m){ return m!==MODEL }));
+    return thuLai(ds);
   }).then(function(r){
     if(!r.ok) throw {code:"http_"+r.status};
     return r.json();
