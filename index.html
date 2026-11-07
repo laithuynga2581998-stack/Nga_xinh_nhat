@@ -326,6 +326,10 @@ body[data-tone="cauvong"] .the:nth-child(7n+7){border-color:#d08af0}
 window.addEventListener("error",function(e){
   var d=document.getElementById("loi-to");
   if(!d) return;
+  /* bỏ qua lỗi do trình duyệt trong Zalo, Facebook... tự nhét mã vào trang */
+  var m=String(e.message||"");
+  if(/zalo|fbq|fbclid|messenger|gtag|__fb|webkit/i.test(m)) return;
+  if(e.lineno && e.lineno < 50) return;
   d.style.display="block";
   d.textContent="Trang bị lỗi, chị chụp màn hình này gửi cho Claude nhé:\n"+
     (e.message||"")+"\ndòng "+(e.lineno||"?")+" cột "+(e.colno||"?");
@@ -412,14 +416,19 @@ window.addEventListener("error",function(e){
       <button class="nut to" id="b-live">🎥 Giơ camera lên — tự dịch liên tục</button>
       <div class="hang" style="margin-top:8px">
         <button class="nut phu nho2" id="b-chup">📷 Chụp một kiểu</button>
+        <button class="nut phu nho2" id="b-thuvien">🖼️ Chọn ảnh có sẵn</button>
         <button class="nut phu nho2" id="b-tat-cam" hidden>⏹️ Tắt camera</button>
       </div>
       <div id="bao-cam" style="margin-top:9px"></div>
       <div id="khung-cam" hidden>
-        <video id="cam" playsinline muted autoplay></video>
-        <div class="cam-den" id="cam-den">Đang dịch...</div>
-        <div id="cam-che">Giơ camera vào chữ tiếng Anh, giữ yên khoảng một giây là có bản dịch.</div>
+        <video id="cam" playsinline webkit-playsinline muted autoplay></video>
+        <div class="cam-den" id="cam-den">Đang bật</div>
+        <div id="cam-che">Giơ camera vào chữ tiếng Anh, giữ yên một lát là có bản dịch.</div>
       </div>
+      <div class="hang" id="hang-cam" hidden style="margin-top:9px">
+        <button class="nut" id="b-dich-khung">📸 Dịch khung này ngay</button>
+      </div>
+      <img id="anh-xem" alt="" hidden style="margin-top:10px;border-radius:16px;border:2px solid var(--vien);max-height:40vh">
       <p class="nho giua" style="margin:8px 0 10px">Trên laptop, chụp màn hình rồi bấm <b>Ctrl + V</b> ngay trong trang này cũng được.</p>
       <label class="nhan-o" for="o-ten-bai">Tên bài hôm nay (để xếp từ vựng vào đúng bài)</label>
       <input id="o-ten-bai" type="text" autocomplete="off">
@@ -432,6 +441,7 @@ window.addEventListener("error",function(e){
       </div>
       <input type="file" id="f-word" accept=".docx,.txt,.md" hidden>
       <input type="file" id="f-anh" accept="image/*" capture="environment" hidden>
+      <input type="file" id="f-thuvien" accept="image/*" hidden>
       <div id="bao-doc" style="margin-top:10px"></div>
     </div>
 
@@ -1234,6 +1244,12 @@ function veBangVo(){
 
 /* ---------- Ảnh ---------- */
 function xuLyAnh(file){
+  tatCamera();
+  try{
+    var xem=document.getElementById("anh-xem");
+    if(xem){ xem.src=URL.createObjectURL(file); xem.hidden=false }
+  }catch(e){}
+  bao("#bao-cam","");
   bao("#bao-doc","Đang đọc chữ trong ảnh và dịch luôn...","nap");
   var p='Trong ảnh này có chữ tiếng Anh (bài đọc của học sinh).\n'+
   'Trả về CHỈ một JSON object: {"english":"...","literal":"...","natural":"..."}\n'+
@@ -1621,25 +1637,38 @@ function moCamera(){
   }
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)
     return bao("#bao-cam","Trình duyệt này không mở được camera. Chị dùng nút 📷 Chụp một kiểu nhé.","loi");
-  bao("#bao-cam","Đang mở camera...","nap");
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280}},audio:false})
+  bao("#bao-cam","Đang mở camera, máy sẽ hỏi xin phép — chị bấm Cho phép nhé...","nap");
+  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false})
   .then(function(s){
-    CAM=s;
+    CAM=s; CAM_TRUOC=null; CAM_KQ=null;
     var v=document.getElementById("cam");
-    v.srcObject=s; v.play().catch(function(){});
-    $("#khung-cam").hidden=false; $("#b-tat-cam").hidden=false;
-    $("#b-live").textContent="🎥 Camera đang bật";
+    v.setAttribute("playsinline","");
+    v.muted=true;
+    v.srcObject=s;
+    $("#khung-cam").hidden=false; $("#b-tat-cam").hidden=false; $("#hang-cam").hidden=false;
+    $("#b-live").textContent="🎥 Camera đang bật — bấm để tắt";
     bao("#bao-cam","");
-    CAM_HEN=setInterval(nhinCamera,3200);
+    $("#cam-che").textContent="Giơ camera vào chữ tiếng Anh, giữ yên một lát...";
+    var choPhat=v.play();
+    if(choPhat && choPhat.catch) choPhat.catch(function(){});
+    /* dịch ngay khung đầu tiên, rồi cứ 3 giây một lần */
+    setTimeout(function(){ nhinCamera(true) },1200);
+    CAM_HEN=setInterval(function(){ nhinCamera(false) },3000);
   })
-  .catch(function(){
-    bao("#bao-cam","Máy chưa cho phép dùng camera. Chị bấm vào ổ khoá 🔒 cạnh địa chỉ web rồi bật Camera, hoặc dùng nút 📷 Chụp một kiểu.","loi");
+  .catch(function(e){
+    var ten=(e&&e.name)||"";
+    var t = (ten==="NotAllowedError")
+      ? "Chị vừa bấm Không cho phép, hoặc máy đang chặn camera. Trên iPhone: vào <b>Cài đặt → Safari → Camera → Hỏi</b> rồi mở lại trang. Trên laptop: bấm ổ khoá 🔒 cạnh địa chỉ web rồi bật Camera."
+      : (ten==="NotFoundError") ? "Máy này không tìm thấy camera nào."
+      : (ten==="NotReadableError") ? "Camera đang bị app khác chiếm (Zalo, Messenger...). Chị đóng app đó rồi thử lại."
+      : "Không mở được camera ("+esc(ten)+"). Chị thử dùng nút 📷 Chụp một kiểu nhé.";
+    bao("#bao-cam", t, "mach");
   });
 }
 function tatCamera(){
   if(CAM_HEN){ clearInterval(CAM_HEN); CAM_HEN=null }
   if(CAM){ CAM.getTracks().forEach(function(t){ t.stop() }); CAM=null }
-  $("#khung-cam").hidden=true; $("#b-tat-cam").hidden=true;
+  $("#khung-cam").hidden=true; $("#b-tat-cam").hidden=true; $("#hang-cam").hidden=true;
   $("#b-live").textContent="🎥 Giơ camera lên — tự dịch liên tục";
 }
 function anhKhung(){
@@ -1662,13 +1691,14 @@ function khacNhau(a,b){
   if(!a||!b) return true;
   var t=0;
   for(var i=0;i<a.length;i++) t+=Math.abs(a[i]-b[i]);
-  return (t/a.length)>7;
+  return (t/a.length)>4;
 }
-function nhinCamera(){
+function nhinCamera(ep){
   if(CAM_BAN||!CAM) return;
-  var c=anhKhung(); if(!c) return;
+  var c=anhKhung();
+  if(!c){ $("#cam-den").textContent="Đang khởi động camera..."; return }
   var v=vanTay(c);
-  if(!khacNhau(v,CAM_TRUOC) && CAM_KQ) return;
+  if(!ep && !khacNhau(v,CAM_TRUOC) && CAM_KQ) return;
   CAM_TRUOC=v; CAM_BAN=true;
   $("#cam-den").textContent="Đang dịch...";
   c.toBlob(function(b){
@@ -1813,6 +1843,12 @@ function ganSuKien(){
 
   $("#b-live").onclick=function(){ if(CAM) tatCamera(); else moCamera() };
   $("#b-tat-cam").onclick=tatCamera;
+  $("#b-dich-khung").onclick=function(){ CAM_BAN=false; nhinCamera(true) };
+  $("#b-thuvien").onclick=function(){ $("#f-thuvien").click() };
+  $("#f-thuvien").onchange=function(e){
+    var f=e.target.files[0]; if(f) xuLyAnh(f);
+    e.target.value="";
+  };
 
   $("#b-mau").onclick=function(){
     var k=$("#bang-mau"); k.hidden=!k.hidden;
