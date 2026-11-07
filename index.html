@@ -1533,8 +1533,7 @@ function moOGhi(i){
   h.hidden=false; if(the) the.classList.add("dang");
   if(h.dataset.xong==="1") return;
   h.dataset.xong="1";
-  h.innerHTML='<div class="nho" style="margin:10px 0 7px">'+machMicro()+'</div>'+
-    '<textarea id="o-ghi-'+i+'" placeholder="Chỗ này sẽ hiện ra những gì bạn vừa đọc..."></textarea>'+
+  h.innerHTML='<textarea id="o-ghi-'+i+'" placeholder="Bấm micro trên bàn phím rồi đọc câu trên..."></textarea>'+
     '<div class="hang" style="margin-top:9px">'+
     '<button type="button" class="nut xanh nho2" data-tro="'+i+'">👆 Đặt con trỏ vào ô</button>'+
     '<button type="button" class="nut phu nho2" data-ghi="'+i+'">🎙️ Thử ghi âm</button>'+
@@ -1554,7 +1553,7 @@ function moOGhi(i){
   };
 }
 function machMicro(){
-  return 'Bấm vào ô chữ bên dưới rồi dùng <b>micro trên bàn phím</b> (laptop: <b>Windows + H</b>) để đọc nhé 🎙️';
+  return 'Dùng micro trên bàn phím để đọc nhé (laptop: Windows + H) 🎙️';
 }
 function ghiAm(oId,baoId){
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -1565,7 +1564,7 @@ function ghiAm(oId,baoId){
     if(the&&the.scrollIntoView) the.scrollIntoView({behavior:"smooth",block:"start"});
     o.focus();
   }
-  if(!SR) return bao(baoId, machMicro(), "mach");
+  if(!SR) return bao(baoId, machMicro());
   try{
     if(NHAN){ NHAN.stop(); NHAN=null; return bao(baoId,"Đã dừng ghi. Bấm Chấm điểm nhé!") }
     NHAN=new SR(); NHAN.lang="en-US"; NHAN.interimResults=true; NHAN.continuous=true;
@@ -1581,14 +1580,14 @@ function ghiAm(oId,baoId){
     NHAN.onerror=function(ev){
       NHAN=null;
       if(ev.error==="no-speech") return bao(baoId,"Chưa nghe thấy gì cả, chị đọc to hơn chút nhé.","loi");
-      bao(baoId, machMicro(), "mach");
+      bao(baoId, machMicro());
     };
     NHAN.onend=function(){ NHAN=null };
     NHAN.start();
     bao(baoId,"Đang nghe... đọc xong bấm lại 🎙️ để dừng.","nap");
   }catch(e){
     NHAN=null;
-    bao(baoId, machMicro(), "mach");
+    bao(baoId, machMicro());
   }
 }
 function chamDiem(goc,daDoc,i){
