@@ -8,6 +8,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🌸</text></svg>">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;600;700;800&display=swap">
 <style>
+img,canvas,video{max-width:100%;height:auto}
 /* Layout: một cột hẹp trên nền hồng chấm bi, các bước học xếp dọc thành thẻ bo tròn; thanh tab dính trên đầu */
 :root{
   --nen:#ffeff6;
@@ -329,6 +330,9 @@ window.addEventListener("error",function(e){
   /* bỏ qua lỗi do trình duyệt trong Zalo, Facebook... tự nhét mã vào trang */
   var m=String(e.message||"");
   if(/zalo|fbq|fbclid|messenger|gtag|__fb|webkit/i.test(m)) return;
+  /* "Script error." không có dòng/cột là lỗi của trình duyệt hoặc tiện ích ngoài, không phải của web */
+  if(/^script error/i.test(m.trim())) return;
+  if(!e.lineno && !e.colno) return;
   if(e.lineno && e.lineno < 50) return;
   d.style.display="block";
   d.textContent="Trang bị lỗi, chị chụp màn hình này gửi cho Claude nhé:\n"+
@@ -428,7 +432,7 @@ window.addEventListener("error",function(e){
       <div class="hang" id="hang-cam" hidden style="margin-top:9px">
         <button class="nut" id="b-dich-khung">📸 Dịch khung này ngay</button>
       </div>
-      <img id="anh-xem" alt="" hidden style="margin-top:10px;border-radius:16px;border:2px solid var(--vien);max-height:40vh">
+      <img id="anh-xem" alt="" hidden style="margin-top:10px;border-radius:16px;border:2px solid var(--vien);display:block;width:100%;max-width:100%;max-height:34vh;object-fit:contain;background:var(--kem)">
       <p class="nho giua" style="margin:8px 0 10px">Trên laptop, chụp màn hình rồi bấm <b>Ctrl + V</b> ngay trong trang này cũng được.</p>
       <label class="nhan-o" for="o-ten-bai">Tên bài hôm nay (để xếp từ vựng vào đúng bài)</label>
       <input id="o-ten-bai" type="text" autocomplete="off">
@@ -888,9 +892,11 @@ function hoi(prompt,opt){
   }
   function thuLai(ds){
     return doModel(ds,0).then(function(r){
-      /* 503 là Google đang quá tải, chờ rồi thử lại một lần */
-      if(r.status!==503) return r;
-      return new Promise(function(res){ setTimeout(res,1800) }).then(function(){ return doModel(ds,0) });
+      /* 503 = Google quá tải, 429 = hết lượt trong phút này -> chờ rồi tự thử lại */
+      if(r.status!==503 && r.status!==429) return r;
+      var cho = r.status===429 ? 12000 : 1800;
+      if(r.status===429) bao("#bao-doc","Google đang bắt nghỉ một chút, đợi em thử lại nhé...","nap");
+      return new Promise(function(res){ setTimeout(res,cho) }).then(function(){ return doModel(ds,0) });
     });
   }
   return p.then(function(){
@@ -961,14 +967,40 @@ function docFile(file){
 }
 
 /* ===================== DỊCH ===================== */
+/* gộp luôn phần chọn từ mới vào cùng một lần hỏi cho đỡ tốn lượt */
+function nhacTu(){
+  return '- words: chọn ra 8-14 từ/cụm từ KHÓ NHẤT và quan trọng nhất của bài, cho học sinh A1-A2 người Việt ghi vào vở từ vựng.\n'+
+  '   + en: từ/cụm từ, viết đúng như trong bài (dạng nguyên thể nếu là động từ chia).\n'+
+  '   + ipa: phiên âm trong hai dấu gạch chéo.\n'+
+  '   + vi: nghĩa tiếng Việt ngắn gọn ĐÚNG trong ngữ cảnh bài này.\n'+
+  '   + topic: chọn đúng MỘT trong: '+CHU_DE.join(" | ")+'. Nếu không mục nào thật sự hợp thì tự đặt một chủ đề ngắn bằng tiếng Việt (2-4 chữ), đừng dồn hết vào "Từ nối & khác".\n'+
+  '   + emoji: đúng một emoji gợi nhớ nghĩa.\n';
+}
+function nhanTuMoi(ws){
+  ws=(ws&&Array.isArray(ws))?ws:[];
+  if(!ws.length) return;
+  var them=0, bai=tenBai();
+  ws.forEach(function(c){
+    if(!c||!c.en) return;
+    var en=String(c.en).toLowerCase();
+    if(CARDS.some(function(x){ return String(x.en).toLowerCase()===en })) return;
+    CARDS.push({en:c.en, vi:c.vi, ipa:c.ipa||"", emoji:c.emoji||"🌸",
+      topic:c.topic||"Từ nối & khác", bai:bai, ts:Date.now()});
+    them++;
+  });
+  veKho(); veBangVo(); veTuMoi(ws);
+  if(them) toast("Đã lưu "+them+" từ vào kho ✅");
+  ghiKho("cards",{items:CARDS});
+}
 function nhacDich(nguon){
   return 'Bạn là trợ lý dịch tiếng Anh cho một người Việt mới học, bị mất gốc.\n'+
   'Hãy dịch đoạn tiếng Anh dưới đây sang tiếng Việt.\n'+
   'Trả về CHỈ một JSON object, không thêm chữ nào khác:\n'+
-  '{"english":"...","literal":"...","natural":"..."}\n'+
+  '{"english":"...","literal":"...","natural":"...","words":[{"en":"...","ipa":"...","vi":"...","topic":"...","emoji":"..."}]}\n'+
   '- english: chép lại nguyên văn đoạn tiếng Anh gốc, GIỮ NGUYÊN mọi dấu xuống dòng.\n'+
   '- literal: bản dịch CỰC SÁT NGHĨA, bám từng từ và trật tự gốc, chấp nhận hơi lủng củng.\n'+
   '- natural: bản dịch mượt hơn, dễ hiểu, nhưng vẫn sát nghĩa, không thêm ý mới.\n'+
+  nhacTu()+
   'QUY TẮC BẮT BUỘC: dịch TOÀN BỘ sang tiếng Việt, không để sót chữ tiếng Anh nào chưa dịch. '+
   'Chỉ giữ nguyên TÊN RIÊNG (tên người, tên trường, tên bảo tàng, địa danh); khi gặp tên riêng thì giữ nguyên tên gốc '+
   'rồi mở ngoặc ghi nghĩa tiếng Việt, ví dụ: International Quilt Museum (Bảo tàng Chăn Chần Bông Quốc tế). '+
@@ -981,7 +1013,7 @@ function chayDich(nguon){
   bao("#bao-doc","Đang dịch cho bạn...","nap");
   $("#b-dich").disabled=true;
   return hoi(nhacDich(nguon)).then(function(r){
-    KQ={ english:String(r.english||nguon), literal:String(r.literal||""), natural:String(r.natural||"") };
+    KQ={ english:String(r.english||nguon), literal:String(r.literal||""), natural:String(r.natural||""), words:r.words };
     bao("#bao-doc","");
     hienKetQua();
   }).catch(function(e){ bao("#bao-doc", loiClaude(e), "loi") })
@@ -997,7 +1029,8 @@ function hienKetQua(){
   $("#khung-kq").scrollIntoView({behavior:"smooth",block:"start"});
   veBangVo();
   ghiBai();
-  if(DOAN) timTuMoi();
+  /* từ mới đã xin sẵn trong cùng lần dịch -> không gọi thêm lượt nữa */
+  if(KQ.words && KQ.words.length) nhanTuMoi(KQ.words);
 }
 function veBanDich(){
   if(!KQ) return;
@@ -1254,10 +1287,11 @@ function xuLyAnh(file){
   bao("#bao-cam","");
   bao("#bao-doc","Đang đọc chữ trong ảnh và dịch luôn...","nap");
   var p='Trong ảnh này có chữ tiếng Anh (bài đọc của học sinh).\n'+
-  'Trả về CHỈ một JSON object: {"english":"...","literal":"...","natural":"..."}\n'+
+  'Trả về CHỈ một JSON object: {"english":"...","literal":"...","natural":"...","words":[{"en":"...","ipa":"...","vi":"...","topic":"...","emoji":"..."}]}\n'+
   '- english: chép lại CHÍNH XÁC toàn bộ chữ tiếng Anh trong ảnh, xuống dòng đúng chỗ ảnh xuống dòng.\n'+
   '- literal: bản dịch tiếng Việt cực sát nghĩa, bám từng từ, chấp nhận lủng củng.\n'+
   '- natural: bản dịch tiếng Việt mượt hơn nhưng vẫn sát nghĩa.\n'+
+  nhacTu()+
   'QUY TẮC BẮT BUỘC: dịch TOÀN BỘ sang tiếng Việt, không để sót chữ tiếng Anh nào. Chỉ giữ nguyên TÊN RIÊNG '+
   '(tên người, tên trường, tên bảo tàng, địa danh), và mở ngoặc ghi nghĩa tiếng Việt ngay sau. '+
   'TUYỆT ĐỐI không viết nửa Anh nửa Việt kiểu "Chăn Quilt".\n'+
@@ -1265,7 +1299,7 @@ function xuLyAnh(file){
   return hoi(p,{images:[file]}).then(function(r){
     var en=String(r.english||"");
     if(!en.trim()){ bao("#bao-doc","Ảnh này mình không thấy chữ tiếng Anh nào. Chụp lại gần và rõ hơn nhé.","loi"); return }
-    KQ={english:en, literal:String(r.literal||""), natural:String(r.natural||"")};
+    KQ={english:en, literal:String(r.literal||""), natural:String(r.natural||""), words:r.words};
     $("#o-nguon").value=en;
     bao("#bao-doc","");
     hienKetQua();
@@ -1499,7 +1533,7 @@ function moOGhi(i){
   h.hidden=false; if(the) the.classList.add("dang");
   if(h.dataset.xong==="1") return;
   h.dataset.xong="1";
-  h.innerHTML='<div class="mach" style="margin:11px 0 9px">'+machMicro()+'</div>'+
+  h.innerHTML='<div class="nho" style="margin:10px 0 7px">'+machMicro()+'</div>'+
     '<textarea id="o-ghi-'+i+'" placeholder="Chỗ này sẽ hiện ra những gì bạn vừa đọc..."></textarea>'+
     '<div class="hang" style="margin-top:9px">'+
     '<button type="button" class="nut xanh nho2" data-tro="'+i+'">👆 Đặt con trỏ vào ô</button>'+
@@ -1507,6 +1541,7 @@ function moOGhi(i){
     '<button type="button" class="nut nho2" data-cham="'+i+'">Chấm điểm cho mình ✨</button></div>'+
     '<div id="bao-cham-'+i+'" style="margin-top:10px"></div><div id="kq-cham-'+i+'"></div>';
   var o0=document.getElementById("o-ghi-"+i); if(o0) o0.focus();
+  if(the&&the.scrollIntoView) the.scrollIntoView({behavior:"smooth",block:"start"});
   h.querySelector("[data-tro]").onclick=function(){
     var o=document.getElementById("o-ghi-"+i);
     if(o){ o.focus(); o.setSelectionRange(o.value.length,o.value.length); }
@@ -1519,18 +1554,17 @@ function moOGhi(i){
   };
 }
 function machMicro(){
-  return '<b>Micro bên trong trang bị Claude khoá</b>, nên mình đọc bằng giọng nói của chính máy nhé — chấm điểm vẫn y hệt.<br><br>'+
-  '<b>📱 Điện thoại (dễ nhất, nên dùng cách này):</b> bấm vào ô chữ bên dưới → bấm <b>nút micro trên bàn phím</b> → đọc câu tiếng Anh.<br><br>'+
-  '<b>💻 Laptop Windows — làm đúng thứ tự này:</b><br>'+
-  '1. Bấm chuột vào <b>ô chữ bên dưới</b>, nhìn thấy con trỏ nhấp nháy trong ô.<br>'+
-  '2. Giữ nguyên, <b>không bấm vào đâu khác</b>, nhấn <b>Windows + H</b>.<br>'+
-  '3. Bảng micro hiện ra thì <b>đọc luôn</b> — đừng bấm chuột vào bảng đó, bấm là mất con trỏ và máy báo "hãy chọn một hộp văn bản".<br>'+
-  '<i>Nếu vẫn báo lỗi:</i> mở Notepad hay Zalo, nhấn Windows + H đọc ở đó, rồi copy dán vào ô bên dưới cũng được.<br><br>'+
-  '<b>🍎 MacBook:</b> bấm vào ô chữ → nhấn <b>phím micro 🎤</b> (hoặc bấm phím Ctrl hai lần) → đọc.';
+  return 'Bấm vào ô chữ bên dưới rồi dùng <b>micro trên bàn phím</b> (laptop: <b>Windows + H</b>) để đọc nhé 🎙️';
 }
 function ghiAm(oId,baoId){
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  var o=$(oId); if(o) o.focus();
+  var o=$(oId);
+  if(o){
+    /* kéo cả thẻ câu lên đầu màn hình để chị vừa nhìn thấy câu vừa gõ, khỏi phải lướt */
+    var the=o.closest?o.closest(".cau"):null;
+    if(the&&the.scrollIntoView) the.scrollIntoView({behavior:"smooth",block:"start"});
+    o.focus();
+  }
   if(!SR) return bao(baoId, machMicro(), "mach");
   try{
     if(NHAN){ NHAN.stop(); NHAN=null; return bao(baoId,"Đã dừng ghi. Bấm Chấm điểm nhé!") }
@@ -1629,7 +1663,7 @@ function yVideo(){
 }
 
 /* ===================== CAMERA TRỰC TIẾP ===================== */
-var CAM=null, CAM_HEN=null, CAM_BAN=false, CAM_TRUOC=null, CAM_KQ=null;
+var CAM=null, CAM_HEN=null, CAM_TAT=null, CAM_BAN=false, CAM_TRUOC=null, CAM_KQ=null;
 function moCamera(){
   if(location.protocol==="file:"){
     return bao("#bao-cam","<b>Camera chưa bật được vì web đang chạy từ file trong máy.</b><br>"+
@@ -1655,7 +1689,12 @@ function moCamera(){
     if(choPhat && choPhat.catch) choPhat.catch(function(){});
     /* dịch ngay khung đầu tiên, rồi cứ 3 giây một lần */
     setTimeout(function(){ nhinCamera(true) },1200);
-    CAM_HEN=setInterval(function(){ nhinCamera(false) },3000);
+    CAM_HEN=setInterval(function(){ nhinCamera(false) },6000);
+    /* tự tắt sau 2 phút để khỏi âm thầm ngốn lượt miễn phí */
+    if(CAM_TAT) clearTimeout(CAM_TAT);
+    CAM_TAT=setTimeout(function(){
+      if(CAM){ tatCamera(); bao("#bao-cam","Camera tự tắt sau 2 phút cho đỡ tốn lượt. Bấm lại là bật tiếp nhé 🌸","mach") }
+    },120000);
   })
   .catch(function(e){
     var ten=(e&&e.name)||"";
@@ -1669,6 +1708,7 @@ function moCamera(){
 }
 function tatCamera(){
   if(CAM_HEN){ clearInterval(CAM_HEN); CAM_HEN=null }
+  if(CAM_TAT){ clearTimeout(CAM_TAT); CAM_TAT=null }
   if(CAM){ CAM.getTracks().forEach(function(t){ t.stop() }); CAM=null }
   $("#khung-cam").hidden=true; $("#b-tat-cam").hidden=true; $("#hang-cam").hidden=true;
   $("#b-live").textContent="🎥 Giơ camera lên — tự dịch liên tục";
